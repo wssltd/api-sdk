@@ -1,0 +1,25 @@
+{
+    "name": "wizardapplication/sdk",
+    "description": "Official PHP SDK for the Wizard Application API. Copyright (c) 2026 Wizard Software Solutions Ltd. All rights reserved.",
+    "type": "library",
+    "license": "proprietary",
+    "homepage": "https://wizardapplication.com/development/api-docs",
+    "authors": [
+        {
+            "name": "Wizard Software Solutions Ltd"
+        }
+    ],
+    "require": {
+        "php": ">=8.0",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "WizardApplication\\": "src/"
+        },
+        "files": [
+            "src/Exceptions.php"
+        ]
+    }
+}

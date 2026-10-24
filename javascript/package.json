@@ -1,0 +1,23 @@
+{
+  "name": "wizardapplication",
+  "version": "1.0.0",
+  "description": "Official JavaScript SDK for the Wizard Application API. Copyright (c) 2026 Wizard Software Solutions Ltd. All rights reserved.",
+  "author": "Wizard Software Solutions Ltd",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://wizardapplication.com/development/api-docs",
+  "main": "./lib/index.cjs",
+  "module": "./lib/index.mjs",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.mjs",
+      "require": "./lib/index.cjs"
+    }
+  },
+  "files": ["lib", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["wizard application", "api", "sdk"]
+}

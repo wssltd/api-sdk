@@ -1,0 +1,30 @@
+Wizard Application SDK Licence
+
+Copyright (c) 2026 Wizard Software Solutions Ltd. All rights reserved.
+
+1. Licence. Wizard Software Solutions Ltd ("we") grants you a non-exclusive,
+   non-transferable, royalty-free licence to use, copy and modify this
+   software development kit (the "SDK"), and to include it in your own
+   software, solely for the purpose of accessing the Wizard Application API
+   with a Wizard Application account you are entitled to use.
+
+2. Restrictions. You may not sell, sublicense or distribute the SDK on its own
+   or as a separate product, use it to access any service other than Wizard
+   Application, or remove or alter this notice or any copyright notice in the
+   SDK's files. Any copy or substantial portion of the SDK you distribute as
+   part of your own software must keep this notice.
+
+3. Ownership. We own all rights in the SDK not expressly granted to you.
+
+4. No warranty. The SDK is provided "as is", without warranty of any kind,
+   express or implied, including fitness for a particular purpose and
+   non-infringement.
+
+5. Liability. To the extent permitted by law, we are not liable for any
+   claim, damages or other liability arising from the SDK or its use.
+   Nothing in this licence limits liability that cannot be limited by law.
+
+6. Use of the API. Your use of the Wizard Application API remains subject to
+   the Wizard Application terms of service.
+
+7. Law. This licence is governed by the laws of England and Wales.

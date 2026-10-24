@@ -1,0 +1,28 @@
+# Copyright (c) 2026 Wizard Software Solutions Ltd. All rights reserved.
+
+# Build output and dependencies, per language
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+node_modules/
+vendor/
+composer.lock
+*.gem
+.bundle/
+bin/
+obj/
+*.nupkg
+target/
+*.class
+
+# Editors and OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local secrets
+.env

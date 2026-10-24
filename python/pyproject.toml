@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wizardapplication"
+version = "1.0.0"
+description = "Official Python SDK for the Wizard Application API"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [{ name = "Wizard Software Solutions Ltd" }]
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: Other/Proprietary License",
+]
+
+[project.urls]
+Homepage = "https://wizardapplication.com"
+Documentation = "https://wizardapplication.com/development/api-docs"
+
+[tool.setuptools]
+packages = ["wizardapplication"]
+
+[tool.setuptools.package-data]
+wizardapplication = ["py.typed"]
