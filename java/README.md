@@ -16,7 +16,7 @@ Then add it to your project:
 <dependency>
   <groupId>com.wizardapplication</groupId>
   <artifactId>wizardapplication-sdk</artifactId>
-  <version>1.0.0</version>
+  <version>1.1.0</version>
 </dependency>
 ```
 
@@ -62,6 +62,39 @@ Map<String, Object> customer = client.leads().convert("LEAD_ID");
 Page types = client.contentTypes().list();
 Page posts = client.content("blog-posts").list(Map.of("status", "published"));
 ```
+
+## Users
+
+```java
+Page people = client.users().list(Map.of("status", "active", "search", "smith"));
+Map<String, Object> user = client.users().create(Map.of("email", "sam@acme.com", "first_name", "Sam",
+        "last_name", "Lee", "role", "Recruiter", "manager_email", "alex@acme.com"));
+client.users().update((String) user.get("id"), Map.of("job_title", "Senior Recruiter"));
+client.users().sendInvitation((String) user.get("id"));
+
+Map<String, Object> result = client.users().importUsers(List.of(
+        Map.of("email", "lead@acme.com", "first_name", "Jo", "last_name", "Hart", "role", "Manager"),
+        Map.of("email", "new@acme.com", "first_name", "Kim", "last_name", "Ng", "manager_email", "lead@acme.com")));
+System.out.println(result.get("summary")); // {created=2, skipped=0, failed=0}
+```
+
+Users can't be deleted through the API. Every user you create is a paid seat, so the key needs the per-seat charge accepted when it is created.
+
+## AI employees
+
+```java
+for (Map<String, Object> employee : client.aiEmployees().list()) {
+    System.out.println(employee.get("id") + " " + employee.get("name"));
+}
+
+Map<String, Object> answer = client.aiEmployees().ask("Accounts Assistant",
+        "Chase every invoice more than 14 days overdue.");
+System.out.println(answer.get("summary") + " " + answer.get("awaiting_approval"));
+```
+
+`ask` hands the job to the AI employee through your workspace's MCP server and waits for it to finish (up to a few minutes). Changes it wants to make wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. The key needs the `ai_employees.write` permission.
+
+`client.callTool(name, arguments)` calls any other MCP tool your key allows.
 
 ## Every page
 

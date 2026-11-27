@@ -7,7 +7,7 @@ Official Python client for the Wizard Application API. Python 3.8 or later, no d
 From GitHub:
 
 ```bash
-pip install "git+https://github.com/wssltd/api-sdk.git@v1.0.0#subdirectory=python"
+pip install "git+https://github.com/wssltd/api-sdk.git@v1.1.0#subdirectory=python"
 ```
 
 Or from this folder:
@@ -52,6 +52,39 @@ types = client.content_types.list()
 posts = client.content("blog-posts").list(status="published")
 post = client.content("blog-posts").create({"title": "Hello", "fields": {"body": "..."}})
 ```
+
+## Users
+
+```python
+people = client.users.list(status="active", search="smith")
+user = client.users.create({"email": "sam@acme.com", "first_name": "Sam", "last_name": "Lee",
+                            "role": "Recruiter", "manager_email": "alex@acme.com"})
+client.users.update(user["id"], {"job_title": "Senior Recruiter"})
+client.users.send_invitation(user["id"])
+
+result = client.users.import_users([
+    {"email": "lead@acme.com", "first_name": "Jo", "last_name": "Hart", "role": "Manager"},
+    {"email": "new@acme.com", "first_name": "Kim", "last_name": "Ng", "manager_email": "lead@acme.com"},
+])
+print(result["summary"])  # {"created": 2, "skipped": 0, "failed": 0}
+```
+
+Users can't be deleted through the API. Every user you create is a paid seat, so the key needs the per-seat charge accepted when it is created.
+
+## AI employees
+
+```python
+for employee in client.ai_employees.list():
+    print(employee["id"], employee["name"])
+
+result = client.ai_employees.ask("Accounts Assistant",
+                                 "Chase every invoice more than 14 days overdue.")
+print(result["summary"], result["awaiting_approval"])
+```
+
+`ask` hands the job to the AI employee through your workspace's MCP server and waits for it to finish (up to a few minutes). Changes it wants to make wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. The key needs the `ai_employees.write` permission.
+
+`client.call_tool(name, arguments)` calls any other MCP tool your key allows.
 
 ## Every page
 

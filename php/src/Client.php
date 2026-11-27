@@ -14,7 +14,7 @@ namespace WizardApplication;
  */
 final class Client
 {
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.1.0';
     private const MAX_RETRY_WAIT = 60;
     private const LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
 
@@ -31,6 +31,9 @@ final class Client
     public Resource $bookings;
     public Leads $leads;
     public ContentTypes $contentTypes;
+    public Users $users;
+    public AIEmployees $aiEmployees;
+    private int $mcpId = 0;
 
     /**
      * @param array{api_key?:string,workspace?:string,base_url?:string,timeout?:int,max_retries?:int,allow_http?:bool} $options
@@ -59,6 +62,56 @@ final class Client
         $this->bookings = new Resource($this, 'bookings');
         $this->leads = new Leads($this, 'leads');
         $this->contentTypes = new ContentTypes($this);
+        $this->users = new Users($this, 'users');
+        $this->aiEmployees = new AIEmployees($this);
+    }
+
+    private const NOT_ALLOWED = 'Unknown tool or not allowed';
+
+    /**
+     * Calls one tool on the workspace's MCP server and returns its result,
+     * decoded from JSON when it is JSON (otherwise the text). A tool the key
+     * isn't allowed to use throws PermissionDeniedException; a tool that fails
+     * throws WizardApplicationException with code 'tool_error'.
+     *
+     * @param array<string, mixed> $arguments
+     * @param int|null $timeout seconds, overriding the client's for this call
+     * @return mixed
+     */
+    public function callTool(string $name, array $arguments = [], ?int $timeout = null)
+    {
+        $this->mcpId++;
+        $payload = $this->request('POST', '/mcp', null, [
+            'jsonrpc' => '2.0',
+            'id' => $this->mcpId,
+            'method' => 'tools/call',
+            'params' => ['name' => $name, 'arguments' => $arguments === [] ? new \stdClass() : $arguments],
+        ], $timeout);
+        if (!is_array($payload)) {
+            throw new WizardApplicationException('The MCP server sent an unexpected response.', 0, 'mcp_error', [], null, $payload);
+        }
+        if (!empty($payload['error'])) {
+            $message = is_array($payload['error']) && isset($payload['error']['message']) ? (string) $payload['error']['message'] : 'MCP request failed.';
+            throw new WizardApplicationException($message, 0, 'mcp_error', [], null, $payload);
+        }
+        $result = isset($payload['result']) && is_array($payload['result']) ? $payload['result'] : [];
+        $text = '';
+        foreach ((isset($result['content']) && is_array($result['content'])) ? $result['content'] : [] as $part) {
+            if (is_array($part) && ($part['type'] ?? '') === 'text') {
+                $text .= (string) ($part['text'] ?? '');
+            }
+        }
+        if (!empty($result['isError'])) {
+            if (strncmp($text, self::NOT_ALLOWED, strlen(self::NOT_ALLOWED)) === 0) {
+                throw new PermissionDeniedException($text, 403, 'permission_denied', [], null, $payload);
+            }
+            throw new WizardApplicationException($text !== '' ? $text : 'The tool failed.', 0, 'tool_error', [], null, $payload);
+        }
+        if ($text === '') {
+            return null;
+        }
+        $decoded = json_decode($text, true);
+        return json_last_error() === JSON_ERROR_NONE ? $decoded : $text;
     }
 
     /** Items of one content type, by its slug or ID (e.g. "blog-posts"). */
@@ -108,10 +161,12 @@ final class Client
      *
      * @param array<string, mixed>|null $query
      * @param array<string, mixed>|object|null $body
+     * @param int|null $timeout seconds, overriding the client's for this request
      * @return mixed
      */
-    public function request(string $method, string $path, ?array $query = null, $body = null)
+    public function request(string $method, string $path, ?array $query = null, $body = null, ?int $timeout = null)
     {
+        $timeout = max($timeout ?? 0, $this->timeout);
         $method = strtoupper($method);
         $url = $this->baseUrl . $path . self::encodeQuery($query);
         $payload = null;
@@ -133,8 +188,8 @@ final class Client
                 CURLOPT_CUSTOMREQUEST => $method,
                 CURLOPT_HTTPHEADER => $headers,
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => $this->timeout,
-                CURLOPT_CONNECTTIMEOUT => min(10, $this->timeout),
+                CURLOPT_TIMEOUT => $timeout,
+                CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
                 // Never follow redirects: the API key must not reach another URL.
                 CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_SSL_VERIFYPEER => true,

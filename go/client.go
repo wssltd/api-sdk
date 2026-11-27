@@ -25,7 +25,7 @@ import (
 )
 
 // Version is the SDK version.
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 const maxRetryWait = 60 * time.Second
 
@@ -63,6 +63,10 @@ type Client struct {
 	Bookings     *Resource
 	Leads        *Leads
 	ContentTypes *ContentTypes
+	Users        *Users
+	AIEmployees  *AIEmployees
+
+	mcpID int64
 }
 
 // Option configures a Client.
@@ -146,6 +150,8 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 	c.Bookings = &Resource{client: c, path: "/bookings"}
 	c.Leads = &Leads{Resource{client: c, path: "/leads"}}
 	c.ContentTypes = &ContentTypes{client: c}
+	c.Users = &Users{Resource{client: c, path: "/users"}}
+	c.AIEmployees = &AIEmployees{client: c}
 	return c, nil
 }
 
@@ -208,6 +214,21 @@ func resolveBaseURL(workspace, baseURL string, allowHTTP bool) (string, error) {
 // Do sends a request and decodes the JSON response into out (which may be
 // nil). Use it for anything the resource helpers don't cover.
 func (c *Client) Do(ctx context.Context, method, path string, params Params, body interface{}, out interface{}) error {
+	return c.do(ctx, c.httpClient, method, path, params, body, out)
+}
+
+// withTimeout returns the HTTP client to use for a call that may take up to
+// d: the configured one, or a copy of it with a longer timeout.
+func (c *Client) withTimeout(d time.Duration) *http.Client {
+	if c.httpClient.Timeout == 0 || c.httpClient.Timeout >= d {
+		return c.httpClient
+	}
+	hc := *c.httpClient
+	hc.Timeout = d
+	return &hc
+}
+
+func (c *Client) do(ctx context.Context, hc *http.Client, method, path string, params Params, body interface{}, out interface{}) error {
 	method = strings.ToUpper(method)
 	target := c.baseURL + path
 	if q := encodeParams(params); q != "" {
@@ -238,7 +259,7 @@ func (c *Client) Do(ctx context.Context, method, path string, params Params, bod
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := c.httpClient.Do(req)
+		resp, err := hc.Do(req)
 		if err != nil {
 			if ctx.Err() == nil && attempt < c.maxRetries && idempotent && !isRedirectErr(err) {
 				if werr := sleepCtx(ctx, backoff(attempt+1, -1)); werr != nil {

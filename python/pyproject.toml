@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wizardapplication"
-version = "1.0.0"
+version = "1.1.0"
 description = "Official Python SDK for the Wizard Application API"
 readme = "README.md"
 requires-python = ">=3.8"

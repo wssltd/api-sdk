@@ -19,7 +19,8 @@ module WizardApplication
     MAX_RETRY_WAIT = 60
     NETWORK_ERRORS = [IOError, EOFError, SocketError, SystemCallError, Timeout::Error, OpenSSL::SSL::SSLError].freeze
 
-    attr_reader :base_url, :timeout, :max_retries, :jobs, :candidates, :companies, :bookings, :leads, :content_types
+    attr_reader :base_url, :timeout, :max_retries, :jobs, :candidates, :companies, :bookings, :leads, :content_types,
+                :users, :ai_employees
     # Rate limit headers from the latest response: { limit:, remaining:, reset: }.
     attr_reader :last_rate_limit
 
@@ -44,6 +45,26 @@ module WizardApplication
       @bookings = Resource.new(self, "bookings")
       @leads = Leads.new(self, "leads")
       @content_types = ContentTypes.new(self)
+      @users = Users.new(self, "users")
+      @ai_employees = AIEmployees.new(self)
+      @mcp_id = 0
+      @mcp_lock = Mutex.new
+    end
+
+    NOT_ALLOWED = "Unknown tool or not allowed"
+
+    # Calls one tool on the workspace's MCP server and returns its result,
+    # parsed from JSON when it is JSON (otherwise the text). A tool the key
+    # isn't allowed to use raises PermissionDeniedError; a tool that fails
+    # raises Error with code "tool_error". timeout (seconds) overrides the
+    # client's for this call.
+    def call_tool(name, arguments = {}, timeout: nil)
+      id = @mcp_lock.synchronize { @mcp_id += 1 }
+      payload = request(:post, "/mcp", timeout: timeout, body: {
+        jsonrpc: "2.0", id: id, method: "tools/call",
+        params: { name: name, arguments: arguments || {} }
+      })
+      tool_result(payload)
     end
 
     # Items of one content type, by its slug or ID (e.g. "blog-posts").
@@ -59,7 +80,8 @@ module WizardApplication
     # Sends a request and returns the decoded JSON body (nil when empty).
     # Retries a 429 after Retry-After, and network errors and 502/503/504 on
     # GET, PUT and DELETE, up to max_retries times.
-    def request(method, path, params: nil, body: nil)
+    def request(method, path, params: nil, body: nil, timeout: nil)
+      wait = [timeout.to_i, @timeout].max
       method = method.to_s.downcase.to_sym
       uri = URI.parse(@base_url + path)
       query = encode_params(params)
@@ -70,7 +92,7 @@ module WizardApplication
 
       loop do
         response = begin
-          perform(method, uri, payload)
+          perform(method, uri, payload, wait)
         rescue *NETWORK_ERRORS => e
           if attempt < @max_retries && idempotent
             attempt += 1
@@ -100,7 +122,33 @@ module WizardApplication
 
     private
 
-    def perform(method, uri, payload)
+    def tool_result(payload)
+      raise Error.new("The MCP server sent an unexpected response.", code: "mcp_error", body: payload) unless payload.is_a?(Hash)
+
+      if payload["error"]
+        message = payload["error"].is_a?(Hash) ? payload["error"]["message"] : nil
+        raise Error.new((message || "MCP request failed.").to_s, code: "mcp_error", body: payload)
+      end
+      result = payload["result"].is_a?(Hash) ? payload["result"] : {}
+      parts = result["content"].is_a?(Array) ? result["content"] : []
+      text = parts.select { |p| p.is_a?(Hash) && p["type"] == "text" }.map { |p| p["text"].to_s }.join
+      if result["isError"]
+        if text.start_with?(NOT_ALLOWED)
+          raise PermissionDeniedError.new(text, status: 403, code: "permission_denied", body: payload)
+        end
+
+        raise Error.new(text.empty? ? "The tool failed." : text, code: "tool_error", body: payload)
+      end
+      return nil if text.empty?
+
+      begin
+        JSON.parse(text)
+      rescue JSON::ParserError
+        text
+      end
+    end
+
+    def perform(method, uri, payload, wait = @timeout)
       klass = { get: Net::HTTP::Get, post: Net::HTTP::Post, put: Net::HTTP::Put, delete: Net::HTTP::Delete }.fetch(method)
       req = klass.new(uri)
       req["Authorization"] = "Bearer #{@api_key}"
@@ -114,8 +162,10 @@ module WizardApplication
         req.body = ""
       end
       # Net::HTTP never follows redirects, so the key stays with this host.
-      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", open_timeout: [@timeout, 10].min,
-                                          read_timeout: @timeout, write_timeout: @timeout) do |http|
+      # max_retries: 0 stops Net::HTTP quietly resending GET, PUT and DELETE
+      # after a timeout; the client's own retries are the only ones.
+      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", open_timeout: [wait, 10].min,
+                                          read_timeout: wait, write_timeout: wait, max_retries: 0) do |http|
         http.request(req)
       end
     end

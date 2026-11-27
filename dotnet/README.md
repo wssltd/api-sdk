@@ -46,6 +46,39 @@ var types = await client.ContentTypes.ListAsync();
 var posts = await client.Content("blog-posts").ListAsync(new ListOptions().Where("status", "published"));
 ```
 
+## Users
+
+```csharp
+var people = await client.Users.ListAsync(new ListOptions().Where("status", "active").Where("search", "smith"));
+var user = await client.Users.CreateAsync(new { email = "sam@acme.com", first_name = "Sam", last_name = "Lee",
+    role = "Recruiter", manager_email = "alex@acme.com" });
+await client.Users.UpdateAsync(user["id"]!.ToString(), new { job_title = "Senior Recruiter" });
+await client.Users.SendInvitationAsync(user["id"]!.ToString());
+
+var result = await client.Users.ImportAsync(new object[]
+{
+    new { email = "lead@acme.com", first_name = "Jo", last_name = "Hart", role = "Manager" },
+    new { email = "new@acme.com", first_name = "Kim", last_name = "Ng", manager_email = "lead@acme.com" },
+});
+Console.WriteLine(result["summary"]); // {"created":2,"skipped":0,"failed":0}
+```
+
+Users can't be deleted through the API. Every user you create is a paid seat, so the key needs the per-seat charge accepted when it is created.
+
+## AI employees
+
+```csharp
+foreach (var employee in await client.AIEmployees.ListAsync())
+    Console.WriteLine($"{employee["id"]} {employee["name"]}");
+
+var answer = await client.AIEmployees.AskAsync("Accounts Assistant", "Chase every invoice more than 14 days overdue.");
+Console.WriteLine($"{answer["summary"]} {answer["awaiting_approval"]}");
+```
+
+`AskAsync` hands the job to the AI employee through your workspace's MCP server and waits for it to finish (up to a few minutes). Changes it wants to make wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. The key needs the `ai_employees.write` permission.
+
+`client.CallToolAsync(name, arguments)` calls any other MCP tool your key allows.
+
 ## Every page
 
 ```csharp

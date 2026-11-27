@@ -104,6 +104,63 @@ module WizardApplication
     end
   end
 
+  # Team members: list, iterate, get, create and update. The API has no
+  # delete. Creating a user adds a paid seat, so the key must have been
+  # created with the per-seat charge accepted.
+  class Users < Resource
+    # Users can't be deleted through the API.
+    def delete(_id)
+      raise NotImplementedError, "Users can't be deleted through the API."
+    end
+
+    # Creates up to 100 users in one call. Returns "data" (one entry per row,
+    # status created, skipped or failed) and "summary" (the counts). A row's
+    # manager_email may name a user created earlier in the same call.
+    def import_users(users)
+      result = @client.request(:post, "#{@path}/import", body: { users: Array(users) })
+      result.is_a?(Hash) ? result : {}
+    end
+
+    # Sends, or sends again, the invitation email to a user who hasn't signed in yet.
+    def send_invitation(id)
+      unwrap(@client.request(:post, "#{@path}/#{Resource.segment(id)}/invitation"))
+    end
+  end
+
+  # The workspace's AI employees, through its MCP server. The key needs the
+  # ai_employees.write permission.
+  class AIEmployees
+    # A job can take a few minutes; the server stops it at three.
+    ASK_TIMEOUT = 200
+
+    def initialize(client)
+      @client = client
+    end
+
+    # Every AI employee that is switched on: id, name, purpose and paused.
+    def list
+      result = @client.call_tool("list_ai_employees", {})
+      items = result.is_a?(Hash) && result["ai_employees"].is_a?(Array) ? result["ai_employees"] : []
+      items.select { |item| item.is_a?(Hash) }
+    end
+
+    # Gives an AI employee (by id or name) a job in plain words and waits for
+    # it, which can take a few minutes. Returns summary, changes_made and
+    # awaiting_approval. Changes wait for one of the people it reports to
+    # unless the workspace trusts it with that kind of change. The same job
+    # asked twice on the same day doesn't queue its changes twice.
+    def ask(ai_employee, instruction, context: nil)
+      if ai_employee.to_s.empty? || instruction.to_s.empty?
+        raise ArgumentError, "ai_employee and instruction are required."
+      end
+
+      args = { ai_employee: ai_employee, instruction: instruction }
+      args[:context] = context unless context.to_s.empty?
+      result = @client.call_tool("ask_ai_employee", args, timeout: ASK_TIMEOUT)
+      result.is_a?(Hash) ? result : {}
+    end
+  end
+
   # Content types (read only).
   class ContentTypes
     def initialize(client)

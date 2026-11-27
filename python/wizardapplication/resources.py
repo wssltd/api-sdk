@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Wizard Software Solutions Ltd. All rights reserved.
 
-"""API resources: jobs, candidates, companies, bookings, leads and content."""
+"""API resources: jobs, candidates, companies, bookings, leads, users, content and AI employees."""
 
 import urllib.parse
 from typing import Any, Dict, Iterator, List, Mapping, Optional
@@ -115,10 +115,62 @@ class ContentItems(Resource):
         super().__init__(client, "content/" + quote_segment(content_type))
 
 
+class Users(Resource):
+    """Team members: list, iterate, get, create and update. The API has no
+    delete. Creating a user adds a paid seat, so the key must have been
+    created with the per-seat charge accepted."""
+
+    def delete(self, id: Any) -> None:
+        raise NotImplementedError("Users can't be deleted through the API.")
+
+    def import_users(self, users: List[Mapping[str, Any]]) -> Dict[str, Any]:
+        """Creates up to 100 users in one call. Returns the per-row results in
+        "data" (status created, skipped or failed) and the counts in "summary".
+        A row's manager_email may name a user created earlier in the same call."""
+        return self._client.request("POST", f"{self._path}/import", body={"users": [dict(u) for u in users]}) or {}
+
+    def send_invitation(self, id: Any) -> Dict[str, Any]:
+        """Sends, or sends again, the invitation email to a user who hasn't
+        signed in yet. Returns the user."""
+        return _data(self._client.request("POST", f"{self._path}/{quote_segment(id)}/invitation"))
+
+
+class AIEmployees:
+    """The workspace's AI employees, reached through its MCP server. The key
+    needs the "AI employees: give jobs" permission (ai_employees.write)."""
+
+    # A job can take a few minutes; the server stops it at three.
+    ASK_TIMEOUT = 200.0
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def list(self) -> List[Dict[str, Any]]:
+        """Every AI employee that is switched on: id, name, purpose and paused."""
+        result = self._client.call_tool("list_ai_employees", {})
+        return list(result.get("ai_employees") or []) if isinstance(result, dict) else []
+
+    def ask(self, ai_employee: str, instruction: str, context: Optional[str] = None) -> Dict[str, Any]:
+        """Gives an AI employee (by id or name) a job in plain words.
+
+        Returns its summary, changes_made and awaiting_approval. Changes wait
+        for one of the people it reports to unless the workspace trusts it
+        with that kind of change. The same job asked twice on the same day
+        doesn't queue its changes twice.
+        """
+        if not ai_employee or not instruction:
+            raise ValueError("ai_employee and instruction are required.")
+        args: Dict[str, Any] = {"ai_employee": ai_employee, "instruction": instruction}
+        if context:
+            args["context"] = context
+        result = self._client.call_tool("ask_ai_employee", args, timeout=self.ASK_TIMEOUT)
+        return result if isinstance(result, dict) else {}
+
+
 def _data(payload: Any) -> Dict[str, Any]:
     if isinstance(payload, dict) and "data" in payload:
         return payload["data"]
     return payload if isinstance(payload, dict) else {}
 
 
-__all__ = ["Page", "Resource", "Leads", "ContentTypes", "ContentItems", "quote_segment"]
+__all__ = ["Page", "Resource", "Leads", "Users", "AIEmployees", "ContentTypes", "ContentItems", "quote_segment"]

@@ -5,13 +5,13 @@ Official Go client for the Wizard Application API. Go 1.18 or later, standard li
 ## Install
 
 ```bash
-go get github.com/wssltd/api-sdk/go@v1.0.0
+go get github.com/wssltd/api-sdk/go@v1.1.0
 ```
 
 Or copy this folder into your project and point your `go.mod` at it:
 
 ```
-require github.com/wssltd/api-sdk/go v1.0.0
+require github.com/wssltd/api-sdk/go v1.1.0
 replace github.com/wssltd/api-sdk/go => ./third_party/wizardapplication-go
 ```
 
@@ -57,6 +57,40 @@ posts, err := client.Content("blog-posts").List(ctx, wa.Params{"status": "publis
 ```
 
 To decode into your own types, use `client.Do(ctx, "GET", "/jobs/JOB_ID", nil, nil, &out)`.
+
+## Users
+
+```go
+people, err := client.Users.List(ctx, wizardapplication.Params{"status": "active", "search": "smith"})
+user, err := client.Users.Create(ctx, wizardapplication.Record{"email": "sam@acme.com", "first_name": "Sam",
+	"last_name": "Lee", "role": "Recruiter", "manager_email": "alex@acme.com"})
+_, err = client.Users.Update(ctx, user["id"].(string), wizardapplication.Record{"job_title": "Senior Recruiter"})
+_, err = client.Users.SendInvitation(ctx, user["id"].(string))
+
+result, err := client.Users.Import(ctx, []wizardapplication.Record{
+	{"email": "lead@acme.com", "first_name": "Jo", "last_name": "Hart", "role": "Manager"},
+	{"email": "new@acme.com", "first_name": "Kim", "last_name": "Ng", "manager_email": "lead@acme.com"},
+})
+fmt.Println(result.Summary.Created, result.Summary.Skipped, result.Summary.Failed)
+```
+
+Users can't be deleted through the API. Every user you create is a paid seat, so the key needs the per-seat charge accepted when it is created.
+
+## AI employees
+
+```go
+employees, err := client.AIEmployees.List(ctx)
+for _, e := range employees {
+	fmt.Println(e.ID, e.Name)
+}
+
+result, err := client.AIEmployees.Ask(ctx, "Accounts Assistant", "Chase every invoice more than 14 days overdue.", "")
+fmt.Println(result.Summary, result.AwaitingApproval)
+```
+
+`Ask` hands the job to the AI employee through your workspace's MCP server and waits for it to finish (up to a few minutes). Changes it wants to make wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. The key needs the `ai_employees.write` permission.
+
+`client.CallTool(ctx, name, args, &out)` calls any other MCP tool your key allows. `Ask` uses its own longer timeout, so the client timeout can stay short.
 
 ## Every page
 

@@ -2,7 +2,7 @@
 
 Gem::Specification.new do |spec|
   spec.name = "wizardapplication"
-  spec.version = "1.0.0"
+  spec.version = "1.1.0"
   spec.authors = ["Wizard Software Solutions Ltd"]
   spec.summary = "Official Ruby SDK for the Wizard Application API"
   spec.description = "Copyright (c) 2026 Wizard Software Solutions Ltd. All rights reserved."

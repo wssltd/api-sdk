@@ -13,9 +13,9 @@ import urllib.request
 from typing import Any, Mapping, Optional
 
 from . import errors as _errors
-from .resources import ContentItems, ContentTypes, Leads, Resource
+from .resources import AIEmployees, ContentItems, ContentTypes, Leads, Resource, Users
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 _WORKSPACE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -83,6 +83,9 @@ class WizardApplication:
         self.bookings = Resource(self, "bookings")
         self.leads = Leads(self, "leads")
         self.content_types = ContentTypes(self, "content-types")
+        self.users = Users(self, "users")
+        self.ai_employees = AIEmployees(self)
+        self._mcp_id = 0
 
     def content(self, content_type: str) -> ContentItems:
         """Items of one content type, by its slug or ID (for example "blog-posts")."""
@@ -91,17 +94,34 @@ class WizardApplication:
     def __repr__(self) -> str:  # never show the key
         return f"WizardApplication(base_url={self.base_url!r})"
 
+    def call_tool(self, name: str, arguments: Optional[Mapping[str, Any]] = None,
+                  timeout: Optional[float] = None) -> Any:
+        """Calls one tool on the workspace's MCP server and returns its result,
+        decoded from JSON when it is JSON. Tools the key isn't allowed to use
+        raise PermissionDeniedError; a tool that fails raises
+        WizardApplicationError with code "tool_error"."""
+        self._mcp_id += 1
+        payload = self.request("POST", "/mcp", body={
+            "jsonrpc": "2.0",
+            "id": self._mcp_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": dict(arguments or {})},
+        }, timeout=timeout)
+        return _tool_result(payload)
+
     def request(
         self,
         method: str,
         path: str,
         params: Optional[Mapping[str, Any]] = None,
         body: Optional[Mapping[str, Any]] = None,
+        timeout: Optional[float] = None,
     ) -> Any:
         """Sends a request and returns the decoded JSON body.
 
         Retries a 429 after Retry-After, and network errors and 502/503/504 on
-        GET, PUT and DELETE, up to max_retries times.
+        GET, PUT and DELETE, up to max_retries times. timeout overrides the
+        client's for this request.
         """
         method = method.upper()
         url = self.base_url + path
@@ -121,7 +141,7 @@ class WizardApplication:
         while True:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
-                with _OPENER.open(req, timeout=self.timeout) as resp:
+                with _OPENER.open(req, timeout=timeout or self.timeout) as resp:
                     self._remember_rate_limit(resp.headers)
                     return _decode(resp.read())
             except urllib.error.HTTPError as e:
@@ -208,6 +228,30 @@ def _decode(raw: bytes) -> Any:
         return {"message": raw.decode("utf-8", "replace")[:500]}
 
 
+_NOT_ALLOWED = "Unknown tool or not allowed"
+
+
+def _tool_result(payload: Any) -> Any:
+    """Unwraps an MCP tools/call response, raising for a JSON-RPC or tool error."""
+    if not isinstance(payload, dict):
+        raise _errors.WizardApplicationError("The MCP server sent an unexpected response.", code="mcp_error", body=payload)
+    if payload.get("error"):
+        err = payload["error"] if isinstance(payload["error"], dict) else {}
+        raise _errors.WizardApplicationError(str(err.get("message") or "MCP request failed."), code="mcp_error", body=payload)
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    text = "".join(
+        str(part.get("text") or "")
+        for part in result.get("content") or []
+        if isinstance(part, dict) and part.get("type") == "text"
+    )
+    if result.get("isError"):
+        if text.startswith(_NOT_ALLOWED):
+            raise _errors.PermissionDeniedError(text, status=403, code="permission_denied", body=payload)
+        raise _errors.WizardApplicationError(text or "The tool failed.", code="tool_error", body=payload)
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        return text
 def _int_header(headers: Any, name: str) -> Optional[int]:
     if headers is None:
         return None

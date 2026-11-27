@@ -1,6 +1,6 @@
 # Wizard Application SDKs
 
-Official client libraries for the Wizard Application API, version 1.0.0.
+Official client libraries for the Wizard Application API, version 1.1.0.
 
 Each folder is a complete SDK for one language, with its own README and a quick start example.
 
@@ -30,9 +30,9 @@ Some package tools can install straight from this repository:
 
 | Language | Command |
 |---|---|
-| Python | `pip install "git+https://github.com/wssltd/api-sdk.git@v1.0.0#subdirectory=python"` |
-| Ruby | `gem "wizardapplication", git: "https://github.com/wssltd/api-sdk.git", tag: "v1.0.0", glob: "ruby/*.gemspec"` in your Gemfile |
-| Go | `go get github.com/wssltd/api-sdk/go@v1.0.0` |
+| Python | `pip install "git+https://github.com/wssltd/api-sdk.git@v1.1.0#subdirectory=python"` |
+| Ruby | `gem "wizardapplication", git: "https://github.com/wssltd/api-sdk.git", tag: "v1.1.0", glob: "ruby/*.gemspec"` in your Gemfile |
+| Go | `go get github.com/wssltd/api-sdk/go@v1.1.0` |
 
 ## What every SDK does
 
@@ -49,8 +49,14 @@ All seven SDKs work the same way. Only the naming follows each language's conven
 | Leads | list, iterate, get, create, update, delete, convert | `leads.read`, `leads.write` |
 | Content types | list, get | `content.read` |
 | Content items (`content("blog-posts")`) | list, iterate, get, create, update, delete | `content.read`, `content.write` |
+| Users | list, iterate, get, create, update, import, send invitation | `users.read`, `users.write` |
+| AI employees | list, ask | `ai_employees.write` |
 
 Content needs the Content feature turned on in your workspace.
+
+Users can't be deleted through the API. Every user you create is a paid seat, so a key that creates users must have the per-seat charge accepted when it is made. Import creates up to 100 users in one call and reports each row as created, skipped or failed; a row's `manager_email` can name a user created earlier in the same call.
+
+AI employees go through your workspace's MCP server. `ask` gives one of them a job in plain words, waits for it to finish (up to a few minutes, with its own longer timeout) and returns its summary, the changes it made and the changes waiting for approval. Those wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. A call tool method also reaches any other MCP tool the key allows. AI employees are on the Standard plan and up; API access is on Professional and Enterprise.
 
 **Lists and paging.** `list` returns one page with the records and the page details (page, per page, total, total pages). Pass `page`, `per_page` (up to 100), `sort` and `order` (`asc` or `desc`), plus any filters the endpoint supports, such as `status` or `search`. `iterate` goes through every page for you.
 
@@ -64,6 +70,7 @@ Content needs the Content feature turned on in your workspace.
 | Bookings | `status`, `booking_type`, `start_date`, `end_date`, `search` | created_at, updated_at, start_datetime, end_datetime, title, status, booking_type |
 | Leads | `status`, `source`, `assigned_to`, `search` | created_at, updated_at, first_name, last_name, email, company_name, status, source, last_contacted_at |
 | Content items | `status`, `search` | created_at, updated_at, title, slug, status, published_at |
+| Users | `status` (`active`, `invited`), `email`, `search` | created_at, updated_at, first_name, last_name, email |
 
 **Records.** Records come back as the language's natural map or object type, with the same field names as the API (`first_name`, `salary_min` and so on). The full field list for each resource is in the [API documentation](https://wizardapplication.com/development/api-docs).
 
@@ -80,7 +87,9 @@ Content needs the Content feature turned on in your workspace.
 | 429 | Rate limit | Too many requests this minute (`rate_limit_exceeded`) or this month (`monthly_limit_exceeded`) |
 | 5xx | Server | Something went wrong on our side |
 
-**Retries.** A request that hits the per-minute rate limit is retried after the wait the API gives (up to 60 seconds). Network errors and 502, 503 and 504 responses are retried with a short backoff, but only for reads, updates and deletes, so a create is never sent twice. The default is 2 retries; you can change it or turn retries off.
+AI employee and MCP calls add two codes on the base error type, with status 0: `tool_error` when the tool ran but failed (for example, no AI employee by that name, or it is paused or out of AI credits) and `mcp_error` for a protocol failure. A tool the key isn't allowed to use raises Permission denied.
+
+**Retries.** A request that hits the per-minute rate limit is retried after the wait the API gives (up to 60 seconds). Network errors and 502, 503 and 504 responses are retried with a short backoff, but only for reads, updates and deletes, so a create is never sent twice. AI employee and MCP calls are only retried for the rate limit, like a create. The default is 2 retries; you can change it or turn retries off.
 
 **Rate limits.** The limits from the latest response (limit, remaining, seconds until reset) are available on the client.
 

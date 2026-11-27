@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
@@ -26,7 +27,7 @@ import java.util.regex.Pattern;
  */
 public final class WizardApplication {
     /** SDK version. */
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
 
     private static final Pattern WORKSPACE = Pattern.compile("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$");
     private static final Set<String> LOCAL_HOSTS = Set.of("localhost", "127.0.0.1", "::1", "[::1]");
@@ -46,6 +47,9 @@ public final class WizardApplication {
     private final Resource bookings;
     private final Leads leads;
     private final ContentTypes contentTypes;
+    private final Users users;
+    private final AIEmployees aiEmployees;
+    private final java.util.concurrent.atomic.AtomicLong mcpId = new java.util.concurrent.atomic.AtomicLong();
 
     /** Rate limit headers from a response. Reset is seconds until the per-minute window resets. */
     public static final class RateLimit {
@@ -113,6 +117,8 @@ public final class WizardApplication {
         this.bookings = new Resource(this, "bookings");
         this.leads = new Leads(this, "leads");
         this.contentTypes = new ContentTypes(this);
+        this.users = new Users(this, "users");
+        this.aiEmployees = new AIEmployees(this);
     }
 
     public Resource jobs() { return jobs; }
@@ -121,6 +127,65 @@ public final class WizardApplication {
     public Resource bookings() { return bookings; }
     public Leads leads() { return leads; }
     public ContentTypes contentTypes() { return contentTypes; }
+    public Users users() { return users; }
+    public AIEmployees aiEmployees() { return aiEmployees; }
+
+    private static final String NOT_ALLOWED = "Unknown tool or not allowed";
+
+    /**
+     * Calls one tool on the workspace's MCP server and returns its result,
+     * parsed from JSON when it is JSON (otherwise the text). A tool the key
+     * isn't allowed to use throws PermissionDeniedException; a tool that fails
+     * throws WizardApplicationException with code "tool_error".
+     */
+    public Object callTool(String name, Map<String, ?> arguments) {
+        return callTool(name, arguments, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    Object callTool(String name, Map<String, ?> arguments, Duration longer) {
+        Map<String, Object> params = new java.util.LinkedHashMap<>();
+        params.put("name", name);
+        params.put("arguments", arguments == null ? Map.of() : arguments);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("jsonrpc", "2.0");
+        body.put("id", mcpId.incrementAndGet());
+        body.put("method", "tools/call");
+        body.put("params", params);
+        Duration use = longer != null && longer.compareTo(timeout) > 0 ? longer : timeout;
+        Object payload = request("POST", "/mcp", null, body, use);
+        if (!(payload instanceof Map)) {
+            throw new WizardApplicationException("The MCP server sent an unexpected response.", 0, "mcp_error", null, null, payload, null);
+        }
+        Map<String, Object> obj = (Map<String, Object>) payload;
+        if (obj.get("error") != null) {
+            Object m = obj.get("error") instanceof Map ? ((Map<String, Object>) obj.get("error")).get("message") : null;
+            throw new WizardApplicationException(m != null ? m.toString() : "MCP request failed.", 0, "mcp_error", null, null, payload, null);
+        }
+        Map<String, Object> result = obj.get("result") instanceof Map ? (Map<String, Object>) obj.get("result") : Map.of();
+        StringBuilder text = new StringBuilder();
+        if (result.get("content") instanceof List) {
+            for (Object part : (List<Object>) result.get("content")) {
+                if (part instanceof Map && "text".equals(((Map<String, Object>) part).get("type"))) {
+                    Object t = ((Map<String, Object>) part).get("text");
+                    if (t != null) text.append(t);
+                }
+            }
+        }
+        String value = text.toString();
+        if (Boolean.TRUE.equals(result.get("isError"))) {
+            if (value.startsWith(NOT_ALLOWED)) {
+                throw new PermissionDeniedException(value, 403, "permission_denied", null, null, payload);
+            }
+            throw new WizardApplicationException(value.isEmpty() ? "The tool failed." : value, 0, "tool_error", null, null, payload, null);
+        }
+        if (value.isEmpty()) return null;
+        try {
+            return Json.parse(value);
+        } catch (RuntimeException e) {
+            return value;
+        }
+    }
 
     /** Items of one content type, by its slug or ID (e.g. "blog-posts"). */
     public Resource content(String contentType) {
@@ -172,6 +237,10 @@ public final class WizardApplication {
      * GET, PUT and DELETE, up to maxRetries times.
      */
     public Object request(String method, String path, Map<String, ?> query, Object body) {
+        return request(method, path, query, body, timeout);
+    }
+
+    private Object request(String method, String path, Map<String, ?> query, Object body, Duration timeout) {
         method = method.toUpperCase(java.util.Locale.ROOT);
         URI uri = URI.create(baseUrl + path + encodeQuery(query));
         String payload = body == null ? null : Json.write(body);

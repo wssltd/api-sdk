@@ -29,7 +29,7 @@ func (e *Error) Error() string {
 }
 
 // IsConnection reports a network failure or timeout (no response).
-func (e *Error) IsConnection() bool { return e.Status == 0 }
+func (e *Error) IsConnection() bool { return e.Status == 0 && e.Code == "" }
 
 // IsAuthentication reports a 401: the API key is missing, invalid or expired.
 func (e *Error) IsAuthentication() bool { return e.Status == 401 }

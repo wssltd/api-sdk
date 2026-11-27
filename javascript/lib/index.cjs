@@ -5,7 +5,7 @@
 // Official JavaScript SDK for the Wizard Application API (Node.js 18+).
 // Server side only: never ship an API key to a browser.
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const WORKSPACE_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const RETRY_STATUSES = new Set([502, 503, 504]);
@@ -177,6 +177,88 @@ class Leads extends Resource {
   }
 }
 
+class Users extends Resource {
+  /** Users can't be deleted through the API. */
+  async delete() {
+    throw new TypeError("Users can't be deleted through the API.");
+  }
+
+  /**
+   * Creates up to 100 users in one call. Resolves to { data, summary }: the
+   * per-row results (status created, skipped or failed) and the counts. A
+   * row's manager_email may name a user created earlier in the same call.
+   */
+  async importUsers(users) {
+    return (await this._client.request('POST', `${this._path}/import`, { body: { users: users || [] } })) || {};
+  }
+
+  /** Sends, or sends again, the invitation email to a user who hasn't signed in yet. */
+  async sendInvitation(id) {
+    return unwrap(await this._client.request('POST', `${this._path}/${quoteSegment(id)}/invitation`));
+  }
+}
+
+// A job can take a few minutes; the server stops it at three.
+const ASK_TIMEOUT = 200;
+
+/** The workspace's AI employees, through its MCP server (permission ai_employees.write). */
+class AIEmployees {
+  constructor(client) {
+    this._client = client;
+  }
+
+  /** Every AI employee that is switched on: id, name, purpose and paused. */
+  async list() {
+    const result = await this._client.callTool('list_ai_employees', {});
+    return result && Array.isArray(result.ai_employees) ? result.ai_employees : [];
+  }
+
+  /**
+   * Gives an AI employee (by id or name) a job in plain words. Resolves to
+   * { summary, changes_made, awaiting_approval, ... }. Changes wait for one of
+   * the people it reports to unless the workspace trusts it with that kind of
+   * change. The same job asked twice on the same day doesn't queue its
+   * changes twice.
+   */
+  async ask(aiEmployee, instruction, { context } = {}) {
+    if (!aiEmployee || !instruction) throw new TypeError('aiEmployee and instruction are required.');
+    const args = { ai_employee: aiEmployee, instruction };
+    if (context) args.context = context;
+    const result = await this._client.callTool('ask_ai_employee', args, { timeout: ASK_TIMEOUT });
+    return result && typeof result === 'object' ? result : {};
+  }
+}
+
+const NOT_ALLOWED = 'Unknown tool or not allowed';
+
+/** Unwraps an MCP tools/call response, throwing for a JSON-RPC or tool error. */
+function toolResult(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new WizardApplicationError('The MCP server sent an unexpected response.', { code: 'mcp_error', body: payload });
+  }
+  if (payload.error) {
+    const message = (payload.error && payload.error.message) || 'MCP request failed.';
+    throw new WizardApplicationError(String(message), { code: 'mcp_error', body: payload });
+  }
+  const result = payload.result && typeof payload.result === 'object' ? payload.result : {};
+  const text = (Array.isArray(result.content) ? result.content : [])
+    .filter((part) => part && part.type === 'text')
+    .map((part) => String(part.text || ''))
+    .join('');
+  if (result.isError) {
+    if (text.startsWith(NOT_ALLOWED)) {
+      throw new PermissionDeniedError(text, { status: 403, code: 'permission_denied', body: payload });
+    }
+    throw new WizardApplicationError(text || 'The tool failed.', { code: 'tool_error', body: payload });
+  }
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 class ContentTypes {
   constructor(client) {
     this._client = client;
@@ -221,6 +303,24 @@ class WizardApplication {
     this.bookings = new Resource(this, 'bookings');
     this.leads = new Leads(this, 'leads');
     this.contentTypes = new ContentTypes(this);
+    this.users = new Users(this, 'users');
+    this.aiEmployees = new AIEmployees(this);
+    Object.defineProperty(this, '_mcpId', { value: 0, writable: true, enumerable: false });
+  }
+
+  /**
+   * Calls one tool on the workspace's MCP server and resolves to its result,
+   * parsed from JSON when it is JSON. A tool the key isn't allowed to use
+   * throws PermissionDeniedError; a tool that fails throws
+   * WizardApplicationError with code 'tool_error'.
+   */
+  async callTool(name, args = {}, { timeout } = {}) {
+    this._mcpId += 1;
+    const payload = await this.request('POST', '/mcp', {
+      body: { jsonrpc: '2.0', id: this._mcpId, method: 'tools/call', params: { name, arguments: args || {} } },
+      timeout,
+    });
+    return toolResult(payload);
   }
 
   /** Items of one content type, by its slug or ID (e.g. 'blog-posts'). */
@@ -232,8 +332,8 @@ class WizardApplication {
     return { baseUrl: this.baseUrl };
   }
 
-  /** Sends a request and returns the decoded JSON body. */
-  async request(method, path, { params, body } = {}) {
+  /** Sends a request and returns the decoded JSON body. timeout (seconds) overrides the client's. */
+  async request(method, path, { params, body, timeout } = {}) {
     method = method.toUpperCase();
     const url = this.baseUrl + path + encodeParams(params);
     const headers = {
@@ -250,7 +350,7 @@ class WizardApplication {
     for (let attempt = 0; ; attempt++) {
       let res;
       try {
-        res = await fetch(url, { method, headers, body: payload, signal: AbortSignal.timeout(this.timeout * 1000), redirect: 'error' });
+        res = await fetch(url, { method, headers, body: payload, signal: AbortSignal.timeout((timeout || this.timeout) * 1000), redirect: 'error' });
       } catch (e) {
         if (attempt < this.maxRetries && IDEMPOTENT.has(method)) {
           await sleep(this._wait(attempt + 1, null));

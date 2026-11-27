@@ -146,6 +146,73 @@ namespace WizardApplication
             Unwrap(await Client.RequestAsync(HttpMethod.Post, $"{Path}/{Segment(id)}/convert", null, null, cancellationToken).ConfigureAwait(false));
     }
 
+    /// <summary>
+    /// Team members: list, iterate, get, create and update. The API has no
+    /// delete. Creating a user adds a paid seat, so the key must have been
+    /// created with the per-seat charge accepted.
+    /// </summary>
+    public sealed class UsersResource : Resource
+    {
+        internal UsersResource(WizardApplicationClient client, string path) : base(client, path) { }
+
+        /// <summary>Users can't be deleted through the API.</summary>
+        public new Task DeleteAsync(string id, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Users can't be deleted through the API.");
+
+        /// <summary>
+        /// Creates up to 100 users in one call. Returns <c>data</c> (one entry per row,
+        /// status created, skipped or failed) and <c>summary</c> (the counts). A row's
+        /// manager_email may name a user created earlier in the same call.
+        /// </summary>
+        public async Task<JsonObject> ImportAsync(IEnumerable<object> users, CancellationToken cancellationToken = default) =>
+            await Client.RequestAsync(HttpMethod.Post, Path + "/import", null,
+                new Dictionary<string, object?> { ["users"] = users ?? Array.Empty<object>() }, cancellationToken).ConfigureAwait(false) as JsonObject
+            ?? new JsonObject();
+
+        /// <summary>Sends, or sends again, the invitation email to a user who hasn't signed in yet.</summary>
+        public async Task<JsonObject> SendInvitationAsync(string id, CancellationToken cancellationToken = default) =>
+            Unwrap(await Client.RequestAsync(HttpMethod.Post, $"{Path}/{Segment(id)}/invitation", null, null, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>The workspace's AI employees, through its MCP server. The key needs ai_employees.write.</summary>
+    public sealed class AIEmployeesResource
+    {
+        // A job can take a few minutes; the server stops it at three.
+        private static readonly TimeSpan AskTimeout = TimeSpan.FromSeconds(200);
+        private readonly WizardApplicationClient _client;
+
+        internal AIEmployeesResource(WizardApplicationClient client) => _client = client;
+
+        /// <summary>Every AI employee that is switched on: id, name, purpose and paused.</summary>
+        public async Task<IReadOnlyList<JsonObject>> ListAsync(CancellationToken cancellationToken = default)
+        {
+            var result = await _client.CallToolAsync("list_ai_employees", null, cancellationToken).ConfigureAwait(false);
+            var list = new List<JsonObject>();
+            if (result?["ai_employees"] is JsonArray items)
+                foreach (var item in items)
+                    if (item is JsonObject o) list.Add(o);
+            return list;
+        }
+
+        /// <summary>
+        /// Gives an AI employee (by id or name) a job in plain words and waits for it,
+        /// which can take a few minutes. Returns summary, changes_made and
+        /// awaiting_approval. Changes wait for one of the people it reports to unless
+        /// the workspace trusts it with that kind of change. The same job asked twice
+        /// on the same day doesn't queue its changes twice.
+        /// </summary>
+        public async Task<JsonObject> AskAsync(string aiEmployee, string instruction, string? context = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrEmpty(aiEmployee) || string.IsNullOrEmpty(instruction))
+                throw new ArgumentException("aiEmployee and instruction are required.");
+            var args = new Dictionary<string, object?> { ["ai_employee"] = aiEmployee, ["instruction"] = instruction };
+            if (!string.IsNullOrEmpty(context)) args["context"] = context;
+            var result = await _client.CallToolAsync("ask_ai_employee", args, AskTimeout, cancellationToken).ConfigureAwait(false);
+            return result as JsonObject ?? new JsonObject();
+        }
+    }
+
     /// <summary>Content types (read only).</summary>
     public sealed class ContentTypesResource
     {

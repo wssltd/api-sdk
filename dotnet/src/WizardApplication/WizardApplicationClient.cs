@@ -43,7 +43,7 @@ namespace WizardApplication
     public sealed class WizardApplicationClient : IDisposable
     {
         /// <summary>SDK version.</summary>
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
 
         private static readonly Regex WorkspaceRe = new("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", RegexOptions.Compiled);
         private static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(60);
@@ -51,6 +51,8 @@ namespace WizardApplication
         private readonly string _apiKey;
         private readonly HttpClient _http;
         private readonly int _maxRetries;
+        private readonly TimeSpan _timeout;
+        private long _mcpId;
         private RateLimitInfo? _lastRateLimit;
 
         /// <summary>The API URL requests go to.</summary>
@@ -72,6 +74,12 @@ namespace WizardApplication
         /// <summary>Content types (read only).</summary>
         public ContentTypesResource ContentTypes { get; }
 
+        /// <summary>Team members (no delete; creating one adds a paid seat).</summary>
+        public UsersResource Users { get; }
+
+        /// <summary>The workspace's AI employees, through its MCP server (permission ai_employees.write).</summary>
+        public AIEmployeesResource AIEmployees { get; }
+
         /// <summary>Creates a client for a workspace subdomain.</summary>
         public WizardApplicationClient(string apiKey, string workspace)
             : this(new WizardApplicationOptions { ApiKey = apiKey, Workspace = workspace }) { }
@@ -88,7 +96,10 @@ namespace WizardApplication
             _maxRetries = Math.Max(0, options.MaxRetries);
 
             // Redirects are refused so the API key is never sent to another URL.
-            _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = options.Timeout };
+            // The timeout is applied per request, so a call that may take
+            // longer (an AI employee job) can be given more time.
+            _timeout = options.Timeout;
+            _http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
             _http.DefaultRequestHeaders.UserAgent.ParseAdd($"wizardapplication-dotnet/{Version}");
             _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
@@ -98,6 +109,60 @@ namespace WizardApplication
             Bookings = new Resource(this, "bookings");
             Leads = new LeadsResource(this, "leads");
             ContentTypes = new ContentTypesResource(this);
+            Users = new UsersResource(this, "users");
+            AIEmployees = new AIEmployeesResource(this);
+        }
+
+        /// <summary>
+        /// Calls one tool on the workspace's MCP server and returns its result,
+        /// parsed as JSON when it is JSON (otherwise a JSON string value). A tool
+        /// the key isn't allowed to use throws <see cref="PermissionDeniedException"/>;
+        /// a tool that fails throws <see cref="WizardApplicationException"/> with code "tool_error".
+        /// </summary>
+        public Task<JsonNode?> CallToolAsync(string name, object? arguments = null, CancellationToken cancellationToken = default) =>
+            CallToolAsync(name, arguments, _timeout, cancellationToken);
+
+        internal async Task<JsonNode?> CallToolAsync(string name, object? arguments, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            var body = new Dictionary<string, object?>
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = Interlocked.Increment(ref _mcpId),
+                ["method"] = "tools/call",
+                ["params"] = new Dictionary<string, object?> { ["name"] = name, ["arguments"] = arguments ?? new Dictionary<string, object?>() },
+            };
+            var timeoutToUse = timeout > _timeout ? timeout : _timeout;
+            var node = await SendAsync(HttpMethod.Post, "/mcp", null, body, timeoutToUse, cancellationToken).ConfigureAwait(false);
+            return ToolResult(node);
+        }
+
+        private const string NotAllowed = "Unknown tool or not allowed";
+
+        private static JsonNode? ToolResult(JsonNode? node)
+        {
+            if (node is not JsonObject obj)
+                throw new WizardApplicationException("The MCP server sent an unexpected response.", code: "mcp_error", body: node);
+            if (obj["error"] is JsonNode err)
+            {
+                var message = (err as JsonObject)?["message"]?.GetValue<string>() ?? "MCP request failed.";
+                throw new WizardApplicationException(message, code: "mcp_error", body: node);
+            }
+            var result = obj["result"] as JsonObject ?? new JsonObject();
+            var text = new StringBuilder();
+            if (result["content"] is JsonArray parts)
+                foreach (var part in parts)
+                    if (part is JsonObject p && (p["type"]?.ToString() == "text"))
+                        text.Append(p["text"]?.ToString());
+            var value = text.ToString();
+            if (result["isError"]?.GetValue<bool>() == true)
+            {
+                if (value.StartsWith(NotAllowed, StringComparison.Ordinal))
+                    throw new PermissionDeniedException(value, 403, "permission_denied", new Dictionary<string, string[]>(), null, node);
+                throw new WizardApplicationException(value.Length > 0 ? value : "The tool failed.", code: "tool_error", body: node);
+            }
+            if (value.Length == 0) return null;
+            try { return JsonNode.Parse(value); }
+            catch (JsonException) { return JsonValue.Create(value); }
         }
 
         /// <summary>Items of one content type, by its slug or ID (e.g. "blog-posts").</summary>
@@ -131,8 +196,12 @@ namespace WizardApplication
         }
 
         /// <summary>Sends a request and returns the decoded JSON body (null when empty).</summary>
-        public async Task<JsonNode?> RequestAsync(HttpMethod method, string path, IDictionary<string, object?>? query = null,
-            object? body = null, CancellationToken cancellationToken = default)
+        public Task<JsonNode?> RequestAsync(HttpMethod method, string path, IDictionary<string, object?>? query = null,
+            object? body = null, CancellationToken cancellationToken = default) =>
+            SendAsync(method, path, query, body, _timeout, cancellationToken);
+
+        private async Task<JsonNode?> SendAsync(HttpMethod method, string path, IDictionary<string, object?>? query,
+            object? body, TimeSpan timeout, CancellationToken cancellationToken)
         {
             var url = BaseUrl + path + EncodeQuery(query);
             var payload = body == null ? null : JsonSerializer.Serialize(body);
@@ -145,9 +214,11 @@ namespace WizardApplication
                 if (payload != null) request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
                 HttpResponseMessage response;
+                using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutSource.CancelAfter(timeout);
                 try
                 {
-                    response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                    response = await _http.SendAsync(request, timeoutSource.Token).ConfigureAwait(false);
                 }
                 catch (Exception e) when (e is HttpRequestException || (e is TaskCanceledException && !cancellationToken.IsCancellationRequested))
                 {

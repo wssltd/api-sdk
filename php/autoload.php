@@ -10,5 +10,7 @@ require_once __DIR__ . '/src/Exceptions.php';
 require_once __DIR__ . '/src/Page.php';
 require_once __DIR__ . '/src/Resource.php';
 require_once __DIR__ . '/src/Leads.php';
+require_once __DIR__ . '/src/Users.php';
+require_once __DIR__ . '/src/AIEmployees.php';
 require_once __DIR__ . '/src/ContentTypes.php';
 require_once __DIR__ . '/src/Client.php';

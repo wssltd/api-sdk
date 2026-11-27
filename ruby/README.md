@@ -7,7 +7,7 @@ Official Ruby client for the Wizard Application API. Ruby 3.0 or later, standard
 In your Gemfile, from GitHub:
 
 ```ruby
-gem "wizardapplication", git: "https://github.com/wssltd/api-sdk.git", tag: "v1.0.0", glob: "ruby/*.gemspec"
+gem "wizardapplication", git: "https://github.com/wssltd/api-sdk.git", tag: "v1.1.0", glob: "ruby/*.gemspec"
 ```
 
 Or from a local copy:
@@ -20,7 +20,7 @@ Or build and install the gem from this folder:
 
 ```bash
 gem build wizardapplication.gemspec
-gem install wizardapplication-1.0.0.gem
+gem install wizardapplication-1.1.0.gem
 ```
 
 ## Quick start
@@ -55,6 +55,37 @@ customer = client.leads.convert("LEAD_ID")
 types = client.content_types.list
 posts = client.content("blog-posts").list(status: "published")
 ```
+
+## Users
+
+```ruby
+people = client.users.list(status: "active", search: "smith")
+user = client.users.create("email" => "sam@acme.com", "first_name" => "Sam", "last_name" => "Lee",
+                           "role" => "Recruiter", "manager_email" => "alex@acme.com")
+client.users.update(user["id"], "job_title" => "Senior Recruiter")
+client.users.send_invitation(user["id"])
+
+result = client.users.import_users([
+  { "email" => "lead@acme.com", "first_name" => "Jo", "last_name" => "Hart", "role" => "Manager" },
+  { "email" => "new@acme.com", "first_name" => "Kim", "last_name" => "Ng", "manager_email" => "lead@acme.com" }
+])
+p result["summary"] # {"created"=>2, "skipped"=>0, "failed"=>0}
+```
+
+Users can't be deleted through the API. Every user you create is a paid seat, so the key needs the per-seat charge accepted when it is created.
+
+## AI employees
+
+```ruby
+client.ai_employees.list.each { |employee| puts "#{employee["id"]} #{employee["name"]}" }
+
+result = client.ai_employees.ask("Accounts Assistant", "Chase every invoice more than 14 days overdue.")
+puts result["summary"], result["awaiting_approval"]
+```
+
+`ask` hands the job to the AI employee through your workspace's MCP server and waits for it to finish (up to a few minutes). Changes it wants to make wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. The key needs the `ai_employees.write` permission.
+
+`client.call_tool(name, arguments)` calls any other MCP tool your key allows.
 
 ## Every page
 

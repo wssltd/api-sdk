@@ -54,6 +54,39 @@ $types = $client->contentTypes->list();
 $posts = $client->content('blog-posts')->list(['status' => 'published']);
 ```
 
+## Users
+
+```php
+$people = $client->users->list(['status' => 'active', 'search' => 'smith']);
+$user = $client->users->create(['email' => 'sam@acme.com', 'first_name' => 'Sam', 'last_name' => 'Lee',
+    'role' => 'Recruiter', 'manager_email' => 'alex@acme.com']);
+$client->users->update($user['id'], ['job_title' => 'Senior Recruiter']);
+$client->users->sendInvitation($user['id']);
+
+$result = $client->users->importUsers([
+    ['email' => 'lead@acme.com', 'first_name' => 'Jo', 'last_name' => 'Hart', 'role' => 'Manager'],
+    ['email' => 'new@acme.com', 'first_name' => 'Kim', 'last_name' => 'Ng', 'manager_email' => 'lead@acme.com'],
+]);
+print_r($result['summary']); // created 2, skipped 0, failed 0
+```
+
+Users can't be deleted through the API. Every user you create is a paid seat, so the key needs the per-seat charge accepted when it is created.
+
+## AI employees
+
+```php
+foreach ($client->aiEmployees->list() as $employee) {
+    echo $employee['id'], ' ', $employee['name'], PHP_EOL;
+}
+
+$result = $client->aiEmployees->ask('Accounts Assistant', 'Chase every invoice more than 14 days overdue.');
+echo $result['summary'], ' ', $result['awaiting_approval'], PHP_EOL;
+```
+
+`ask` hands the job to the AI employee through your workspace's MCP server and waits for it to finish (up to a few minutes). Changes it wants to make wait in its action queue in Wizard Application until one of the people it reports to approves them, unless you trust it with that kind of change. The key needs the `ai_employees.write` permission.
+
+`$client->callTool($name, $arguments)` calls any other MCP tool your key allows.
+
 ## Every page
 
 ```php
